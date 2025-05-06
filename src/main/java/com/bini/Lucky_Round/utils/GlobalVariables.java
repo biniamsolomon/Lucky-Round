@@ -21,11 +21,11 @@ public final class GlobalVariables {
 
     public static final Map<String, String> TRANSLATION_MAP_BIRR_CHECK_BALANCE = Map.ofEntries(
 
-            Map.entry(ENGLISH, "Congratulations! You won {rewardAmount} birr by spinning the M-PESA Wheel of Fortune. Use M-PESA to Send Money, Buy Airtime & Packages, and Make Payments."),
-            Map.entry(AMHARIC, "Congratulations! You won {rewardAmount} birr by spinning the M-PESA Wheel of Fortune. Use M-PESA to Send Money, Buy Airtime & Packages, and Make Payments."),
-            Map.entry(OROMIFFA, "Congratulations! You won {rewardAmount} birr by spinning the M-PESA Wheel of Fortune. Use M-PESA to Send Money, Buy Airtime & Packages, and Make Payments."),
-            Map.entry(TIGRIGNA, "Congratulations! You won {rewardAmount} birr by spinning the M-PESA Wheel of Fortune. Use M-PESA to Send Money, Buy Airtime & Packages, and Make Payments."),
-            Map.entry(SOMALI, "Congratulations! You won {rewardAmount} birr by spinning the M-PESA Wheel of Fortune. Use M-PESA to Send Money, Buy Airtime & Packages, and Make Payments."));
+            Map.entry(ENGLISH, "Congratulations! You won {rewardAmount} birr by spinning the Wheel of Fortune. Use M-Birr to Send Money, Buy Airtime & Packages, and Make Payments."),
+            Map.entry(AMHARIC, "Congratulations! You won {rewardAmount} birr by spinning the  Wheel of Fortune. Use M-Birr to Send Money, Buy Airtime & Packages, and Make Payments."),
+            Map.entry(OROMIFFA, "Congratulations! You won {rewardAmount} birr by spinning the  Wheel of Fortune. Use M-Birr to Send Money, Buy Airtime & Packages, and Make Payments."),
+            Map.entry(TIGRIGNA, "Congratulations! You won {rewardAmount} birr by spinning the  Wheel of Fortune. Use M-Birr to Send Money, Buy Airtime & Packages, and Make Payments."),
+            Map.entry(SOMALI, "Congratulations! You won {rewardAmount} birr by spinning the  Wheel of Fortune. Use M-Birr to Send Money, Buy Airtime & Packages, and Make Payments."));
 
 }
 
