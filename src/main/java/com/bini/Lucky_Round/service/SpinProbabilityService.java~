@@ -1,0 +1,252 @@
+package com.bini.Lucky_Round.service;
+
+
+import com.bini.Lucky_Round.config.ConfigService;
+import com.bini.Lucky_Round.dto.RewardDetails;
+import com.bini.Lucky_Round.dto.SpinRewardRequest;
+import com.bini.Lucky_Round.dto.SpinRewardResponse;
+import com.bini.Lucky_Round.dto.Transactions;
+import com.bini.Lucky_Round.repository.SpinTheWheelRequestRepo;
+import com.bini.Lucky_Round.repository.SpinTheWheelSuccessRepo;
+import com.bini.Lucky_Round.repository.SpinTheWheelUnclaimedRepo;
+import com.bini.Lucky_Round.utils.Helper;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+import java.util.logging.LogManager;
+
+@Service
+@RequiredArgsConstructor
+public class SpinProbabilityService {
+
+    public static final String REGISTRATION = "REGISTRATION";
+    private final SpinTheWheelSuccessRepo spinTheWheelSuccessRepo;
+    private final SpinTheWheelRequestRepo spinTheWheelRequestRepo;
+    private final SpinTheWheelUnclaimedRepo unclaimedRepo;
+    private final ConfigService configService;
+    private static final Map<String, Double> hourlyDistributedAmount = new HashMap<>();
+
+    public SpinRewardResponse processRequest(SpinRewardRequest spinRequest, LogManager logManager) {
+
+        String msisdn = Helper.appendCountryCodeToMSISDN(spinRequest.getInitiators().getIdentifier(), "251");
+        String reasonTypeId = spinRequest.getTransactions().getReasonTypeId();
+        Transactions transaction = spinRequest.getTransactions();
+        String transactionType = spinRequest.getTransactions().getTransactionType();
+        Map<Double, String> prizeMap = configService.getPrizeMap();
+        String sessionId = generateChannelSessionId();
+
+        if (REGISTRATION.equals(transactionType)
+                && msisdn.startsWith("2519")) {
+
+            logManager.info(new Log("Process Reward", "First Transaction Received", LogStatus.PROCESSING, "",
+                    " ", " ", "", "", spinRequest.toString()));
+
+            String registrationRewardETH = "1";
+
+            saveUnclaimed(spinRequest, transaction, sessionId, reasonTypeId, msisdn, registrationRewardETH);
+            saveRequestTransaction(transaction, msisdn, registrationRewardETH, spinRequest);
+
+            return SpinRewardResponse.builder()
+                    .requestRefID(spinRequest.getRequestRefID())
+                    .responseCode("0")
+                    .responseDesc("Success")
+                    .channelSessionId(sessionId)
+                    .rewardDetails(List.of(RewardDetails.builder()
+                            .rewardAmount(registrationRewardETH)
+                            .rewardType("Birr")
+                            .build()))
+                    .build();
+        }
+
+        boolean isEth = msisdn.startsWith("2519");
+
+        double HOURLY_BUDGET = isEth ? configService.getHourlyBudgetETH() : configService.getHourlyBudget();
+        double DAILY_BUDGET = isEth ? configService.getDailyBudgetETH() : configService.getDailyBudget();
+        double transactionProbability = isEth
+                ? configService.getTransactionProbabilityETH(reasonTypeId)
+                : configService.getTransactionProbability(reasonTypeId);
+        double allocationPercentage = isEth
+                ? configService.getAllocationPercentageETH(reasonTypeId) * HOURLY_BUDGET
+                : configService.getAllocationPercentage(reasonTypeId) * HOURLY_BUDGET;
+
+        System.out.println("Allocation % = " + allocationPercentage + ", Transaction probability = " + transactionProbability +
+                ", Prize Map = " + prizeMap + ", Daily Budget = " + DAILY_BUDGET + ", HOURLY Budget = " + HOURLY_BUDGET);
+
+        logManager.info(new Log("Process Reward", "Received reward request", LogStatus.PROCESSING, "",
+                " ", " ", "", "", spinRequest.toString()));
+
+        Random rand = new Random();
+
+            if (transactionProbability > 0 && rand.nextDouble() <= transactionProbability) {
+
+                logManager.info(new Log("Process Reward", "Transaction Probability passed :" + transactionProbability, LogStatus.PROCESSING, "",
+                        " ", " ", "", "", spinRequest.toString()));
+
+                String prizeValue = getRandomPrize(rand, prizeMap);
+
+                logManager.info(new Log("Process Reward", "The prize value is randomized with value: " + prizeValue, LogStatus.PROCESSING, "",
+                        " ", " ", "", "", spinRequest.toString()));
+
+                if (!isNumeric(prizeValue)) {
+                    return getFailedResponse(spinRequest, "TRANSACT FOR MORE SPINS");
+                }
+
+                if (!isWithinHourlyLimit(reasonTypeId, Double.parseDouble(prizeValue),  allocationPercentage)) {
+
+                    logManager.info(new Log("Process Reward", "Hourly budget exceeded with value of= " + allocationPercentage + prizeValue, LogStatus.PROCESSING, "",
+                            " ", " ", "", "", spinRequest.toString()));
+
+                    return getFailedResponse(spinRequest, "Hourly budget exceeded");
+                }
+
+                LocalDateTime startOfTheDay = LocalDate.now().atStartOfDay(); // 2025-04-07T00:00
+                LocalDateTime endOfTheDay = startOfTheDay.plusDays(1);
+
+                Double totalRewardedToday = spinTheWheelSuccessRepo.getTotalRewardsForDays(startOfTheDay, endOfTheDay);
+
+                System.out.println("Total Rewarded Today: " + totalRewardedToday);
+
+                if (totalRewardedToday + Double.parseDouble(prizeValue) > DAILY_BUDGET) {
+                    return getFailedResponse(spinRequest, "Daily budget exceeded");
+                }
+
+                trackDistributedAmount(reasonTypeId, Double.parseDouble(prizeValue));
+
+                saveUnclaimed(spinRequest, transaction, sessionId, reasonTypeId, msisdn, prizeValue);
+                saveRequestTransaction(transaction, msisdn, prizeValue, spinRequest);
+
+                logManager.info(new Log("Process Reward", "The Request is successfully saved in both unclaimed ans Request table", LogStatus.PROCESSING, "",
+                        " ", " ", "", "", spinRequest.toString()));
+
+                return SpinRewardResponse.builder()
+                        .requestRefID(spinRequest.getRequestRefID())
+                        .responseCode("0")
+                        .responseDesc("Success")
+                        .channelSessionId(sessionId)
+                        .rewardDetails(List.of(RewardDetails.builder()
+                                .rewardAmount(prizeValue)
+                                .rewardType("Birr")
+                                .build()))
+                        .build();
+            }
+        return getFailedResponse(spinRequest, "Transact for more Spins");
+    }
+
+    private void saveUnclaimed(SpinRewardRequest spinRequest, Transactions transaction, String sessionId, String reasonTypeId, String msisdn, String prizeValue) {
+        var rec = SpinTheWheelUnclaimed.builder()
+                .sessionId(sessionId)
+                .identifierType(spinRequest.getInitiators().getIdentifierType())
+                .transactionType(spinRequest.getTransactions().getTransactionType())
+                .identifier(Helper.appendCountryCodeToMSISDN(spinRequest.getInitiators().getIdentifier(), "251"))
+                .shortCode(spinRequest.getInitiators().getShortCode())
+                .secretKey(spinRequest.getInitiators().getSecretKey())
+                .securityCredential(spinRequest.getInitiators().getSecurityCredential())
+                .reasonTypeId(reasonTypeId)
+                .transactionDate(LocalDateTime.now())
+                .transactionId(transaction.getTransactionId())
+                .receiverMsisdn(msisdn)
+                .amount(spinRequest.getTransactions().getAmount())
+                .rewardAmount(prizeValue)
+                .status(RewardStatus.UNCLAIMED)
+                .rewardType("Birr")
+                .build();
+
+        unclaimedRepo.save(rec);
+    }
+
+    private boolean isWithinHourlyLimit(String reasonTypeId, double rewardAmount, Double allocationPercentage) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime startOfCurrentHour = now.truncatedTo(ChronoUnit.HOURS);         // e.g., 15:00
+        LocalDateTime startOfPreviousHour = startOfCurrentHour.minusHours(24);         // e.g., 14:00
+
+        double hourlyLimit = allocationPercentage;
+
+        double rewardedLastHour = spinTheWheelSuccessRepo.getTotalRewardsForHour(
+                reasonTypeId, startOfPreviousHour, startOfPreviousHour.plusHours(1));
+
+        double rewardedThisHour = spinTheWheelSuccessRepo.getTotalRewardsForHour(
+                reasonTypeId, startOfCurrentHour, startOfCurrentHour.plusHours(1));
+
+        double carryOver;
+        if (rewardedLastHour > 1) {
+            carryOver = Math.max(hourlyLimit - rewardedLastHour, 0);
+        } else {
+            carryOver = 0;
+        }
+        double effectiveBudget = hourlyLimit + carryOver;
+
+        System.out.printf("Reason Type: %s, Start of Previous Hour: %s, Start of Current Hour: %s, Rewarded Last Hour: %.2f, Rewarded This Hour: %.2f," +
+                        " Carry Over: %.2f, Allocation Percentage: %.2f, Effective Budget: %.2f%n", reasonTypeId, startOfPreviousHour,
+                         startOfCurrentHour, rewardedLastHour, rewardedThisHour, carryOver, allocationPercentage, effectiveBudget);
+
+        return (rewardedThisHour <= effectiveBudget);
+
+        //return (rewardedThisHour + rewardAmount) <= effectiveBudget;
+    }
+
+
+    /**  Track the distributed amount */
+    private void trackDistributedAmount(String reasonTypeId, double amount) {
+        hourlyDistributedAmount.put(reasonTypeId, hourlyDistributedAmount.getOrDefault(reasonTypeId, 0.0) + amount);
+    }
+
+    private static String generateChannelSessionId() {
+        return UUID.randomUUID().toString();
+    }
+    private SpinRewardResponse getFailedResponse(SpinRewardRequest spinRequest, String reason) {
+        return SpinRewardResponse.builder()
+                .requestRefID(spinRequest.getRequestRefID())
+                .responseCode("SVC0001")
+                .responseDesc(reason)
+                .channelSessionId(generateChannelSessionId())
+                .rewardDetails(List.of(RewardDetails.builder()
+                        .rewardAmount("0")
+                        .rewardType("Birr")
+                        .build()))
+                .build();
+    }
+
+    private static String getRandomPrize(Random rand, Map<Double, String> prizeMap) {
+        //r=0.6
+        double r = rand.nextDouble();
+        double cumulativeProbability = 0.0;
+        for (Map.Entry<Double, String> entry : prizeMap.entrySet()) {
+            cumulativeProbability += entry.getKey();
+            if (r <= cumulativeProbability) {
+                return entry.getValue();
+            }
+        }
+        return "Transact for more Spins";
+    }
+
+    private void saveRequestTransaction(Transactions transaction, String msisdn, String prizeValue, SpinRewardRequest spinRequest) {
+        spinTheWheelRequestRepo.save(
+                SpinTheWheelRequest.builder()
+                        .transactionId(transaction.getTransactionId())
+                        .reasonTypeId(transaction.getReasonTypeId())
+                        .identifierType(spinRequest.getInitiators().getIdentifierType())
+                        .identifier(Helper.appendCountryCodeToMSISDN(spinRequest.getInitiators().getIdentifier(), "251"))
+                        .shortCode(spinRequest.getInitiators().getShortCode())
+                        .secretKey(spinRequest.getInitiators().getSecretKey())
+                        .msisdn(msisdn)
+                        .rewardAmount(prizeValue)
+                        .status(RewardStatus.INITIATED)
+                        .transactionDate(LocalDateTime.now())
+                        .build()
+        );
+    }
+
+    private boolean isNumeric(String str) {
+        if (str == null) return false;
+        try {
+            Double.parseDouble(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+}
