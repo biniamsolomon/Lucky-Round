@@ -12,26 +12,26 @@ import org.springframework.stereotype.Component;
 public class ConfigProperties {
 
 	private String smsApiUrl;
-	private String g2Timestamp;
+	private String Timestamp;
 	private String smsApiUsername;
 
 	private String smsApiPassword;
 
-	private String g2SyncUrl;
+	private String SyncUrl;
 
-	private String g2ResultUrl;
+	private String ResultUrl;
 
-	private String g2CallerType;
+	private String CallerType;
 
-	private String g2CallerThirdPartyId;
+	private String CallerThirdPartyId;
 
-	private String g2CallerPassword;
+	private String CallerPassword;
 
-	private String g2InitiatorSecurityCredential;
+	private String InitiatorSecurityCredential;
 
-	private String g2InitiatorIdentifier;
+	private String InitiatorIdentifier;
 
-	private String g2InitiatorIdentifierType;
+	private String InitiatorIdentifierType;
 
 	private String b2cInitiatorIdentifier;
 
